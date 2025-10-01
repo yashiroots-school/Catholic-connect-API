@@ -1,0 +1,84 @@
+body {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.ft10 {
+    font-size: 11px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft11 {
+    font-size: 34px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft12 {
+    font-size: 15px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft13 {
+    font-size: 20px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft14 {
+    font-size: 11px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft15 {
+    font-size: 12px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft16 {
+    font-size: 16px;
+    font-family: Times;
+    color: #333333;
+}
+
+.ft17 {
+    font-size: 12px;
+    line-height: 17px;
+    font-family: Times;
+    color: #333333;
+}
+
+.headerTermColumn {
+    width: 80px !important;
+}
+
+table {
+    width: 100%;
+}
+
+/*table, th, td {
+    border: 0.2px solid #00000067;
+    border-collapse: collapse;
+}*/
+
+.signature {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+}
+
+/*@media print {
+    .ft11 {
+        font-size: 23px;*/ /* Font size for printing */
+    /*}
+
+    .ft13 {
+        font-size: 16px;
+    }
+}*/
