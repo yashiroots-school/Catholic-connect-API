@@ -15,4 +15,17 @@
 
         public bool IsActive { get; set; }  // bit
     }
+    public class Roles
+    { 
+        public int RoleID { get; set; }
+        public string RolesName { get; set; }
+
+    }
+    public class Masters
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Type { get; set; }
+
+    }
 }

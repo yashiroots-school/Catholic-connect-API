@@ -11,5 +11,6 @@
         public string FamilyHeadName { get; set; } = string.Empty;
         public string? RoleName { get; set; }
         public long? RoleId { get; set; }
+        public string? FamilyRegNo { get; set; }
     }
 }

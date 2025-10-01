@@ -66,7 +66,98 @@ namespace ChurchAPI.Services
 
             return res;
         }
-        public async Task<IApiResponse> ChurchDetails()
+        public async Task<IApiResponse> GetMasterDropdown()
+        {
+            var res = new ApiResponse();
+            List<Masters> students = new List<Masters>();
+            string procName = "GetMasters";
+            string parameters = null;//$"ClassId={classId}";
+
+            try
+            {
+                using (var connection = new SqlConnection(_connectionString))
+                using (var command = new SqlCommand(procName, connection))
+                {
+                    command.CommandType = CommandType.StoredProcedure;
+                    // command.Parameters.AddWithValue("@ClassId", classId);
+
+                    await connection.OpenAsync();
+
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            students.Add(new Masters
+                            {
+                                Id = reader.GetInt32(reader.GetOrdinal("Id")),
+                                Name = reader.GetString(reader.GetOrdinal("Name")),
+                                Type = reader.GetString(reader.GetOrdinal("Type"))
+                            });
+                        }
+                    }
+                }
+                res.Data = students;
+                res.ResponseCode = "200";
+                // Log success response
+                // await _logger.LogApiCallAsync(procName, parameters, $"Fetched {students.Count} students", userId);
+            }
+            catch (Exception ex)
+            {
+                res.Data = ex.Message;
+                // Log failure response
+                await _logger.LogApiCallAsync(procName, parameters, $"Error: {ex.Message}", "0");
+                res.ResponseCode = "500";
+                throw;
+            }
+
+            return res;
+        }
+        public async Task<IApiResponse> GetRoles()
+        {
+            var res = new ApiResponse();
+            List<Roles> students = new List<Roles>();
+            string procName = "GetRoles";
+            string parameters = null;//$"ClassId={classId}";
+
+            try
+            {
+                using (var connection = new SqlConnection(_connectionString))
+                using (var command = new SqlCommand(procName, connection))
+                {
+                    command.CommandType = CommandType.StoredProcedure;
+                    // command.Parameters.AddWithValue("@ClassId", classId);
+
+                    await connection.OpenAsync();
+
+                    using (var reader = await command.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            students.Add(new Roles
+                            {
+                                RoleID = reader.GetInt32(reader.GetOrdinal("RoleID")),
+                                RolesName = reader.GetString(reader.GetOrdinal("RolesName"))
+                            });
+                        }
+                    }
+                }
+                res.Data = students;
+                res.ResponseCode = "200";
+                // Log success response
+                // await _logger.LogApiCallAsync(procName, parameters, $"Fetched {students.Count} students", userId);
+            }
+            catch (Exception ex)
+            {
+                res.Data = ex.Message;
+                // Log failure response
+                await _logger.LogApiCallAsync(procName, parameters, $"Error: {ex.Message}", "0");
+                res.ResponseCode = "500";
+                throw;
+            }
+
+            return res;
+        }
+        public async Task<IApiResponse> ChurchDetails(int DioceseId)
         {
             var res = new ApiResponse();
             List<ChurchDetails> students = new List<ChurchDetails>();
@@ -79,7 +170,7 @@ namespace ChurchAPI.Services
                 using (var command = new SqlCommand(procName, connection))
                 {
                     command.CommandType = CommandType.StoredProcedure;
-                    // command.Parameters.AddWithValue("@ClassId", classId);
+                    command.Parameters.AddWithValue("@DioceseId", DioceseId);
 
                     await connection.OpenAsync();
 
@@ -123,12 +214,12 @@ namespace ChurchAPI.Services
             try
             {
                 using (var conn = new SqlConnection(_connectionString))
-                using (var cmd = new SqlCommand("ValidateUser", conn))
+                using (var cmd = new SqlCommand("ValidateFamilyUser", conn))
                 {
                     cmd.CommandType = CommandType.StoredProcedure;
                     cmd.Parameters.AddWithValue("@UserName", EmpLogingData.UserName);
                     cmd.Parameters.AddWithValue("@Password", EmpLogingData.Password);
-
+                    cmd.Parameters.AddWithValue("@FireBaseToken", EmpLogingData.FireBaseToken);
                     await conn.OpenAsync();
 
                     using (var reader = await cmd.ExecuteReaderAsync())
@@ -141,7 +232,13 @@ namespace ChurchAPI.Services
                                 UserName = reader["UserName"].ToString()!,
                                 Email = reader["Email"].ToString()!,
                                 RoleName = reader["RolesName"].ToString()!,
-                                UserRoleId = reader["RoleId"] != DBNull.Value ? Convert.ToInt32(reader["RoleId"]) : 0
+                                UserRoleId = reader["RoleId"] != DBNull.Value ? Convert.ToInt32(reader["RoleId"]) : 0,
+                                FamilyRegNo= reader["FamilyRegNo"].ToString()!,
+                                churchId = reader["ChurchId"] != DBNull.Value ? Convert.ToInt32(reader["ChurchId"]) : 0,
+                                DioceseId = reader["DioceseId"] != DBNull.Value ? Convert.ToInt32(reader["DioceseId"]) : 0,
+                                FamilyId = reader["FamilyId"] != DBNull.Value ? Convert.ToInt32(reader["FamilyId"]) : 0,
+                                FireBaseToken = reader["FireBaseToken"] != DBNull.Value ? Convert.ToString(reader["FireBaseToken"]) : null,
+                                FamilyHeadName = reader["FamilyHeadName"] != DBNull.Value ? Convert.ToString(reader["FamilyHeadName"]) : null,
                             });
                         }
                     }
@@ -247,7 +344,7 @@ namespace ChurchAPI.Services
                     cmd.Parameters.AddWithValue("@FamilyHeadName", request.FamilyHeadName);
                     cmd.Parameters.AddWithValue("@RoleName", (object?)request.RoleName ?? DBNull.Value);
                     cmd.Parameters.AddWithValue("@RoleId", (object?)request.RoleId ?? DBNull.Value);
-
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", (object?)request.FamilyRegNo ?? DBNull.Value);
                     await conn.OpenAsync();
 
                     // Execute the stored procedure
@@ -273,4 +370,5 @@ namespace ChurchAPI.Services
         }
 
     }
+
 }

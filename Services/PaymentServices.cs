@@ -11,6 +11,8 @@ using Newtonsoft.Json;
 using Microsoft.Extensions.Configuration;
 using Payrequest;
 using ChurchAPI.Interface;
+using Microsoft.Extensions.Options;
+using System.Collections.Generic;
 
 namespace ChurchAPI.Services
 {
@@ -20,12 +22,14 @@ namespace ChurchAPI.Services
         private readonly IConfiguration _configuration;
         private const string BaseUrl = "http://atom.in?";
         private readonly Models.ViewModels.EncrypDecrpt _encrypDecrpt;
-        public PaymentServices(IConfiguration configuration, EncrypDecrpt encrypDecrpt)
+        private readonly PayUSettings _payUSettings;
+        public PaymentServices(IConfiguration configuration, EncrypDecrpt encrypDecrpt, IOptions<PayUSettings> payUSettings)
         {
             _configuration = configuration;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                 ?? throw new Exception("Connection string not found.");
             _encrypDecrpt = encrypDecrpt;
+            _payUSettings = payUSettings.Value;
         }
         public async Task<PaymentResultModels> PreapareInput(PaymentInputModel objPaymentInputModel)
         {
@@ -75,7 +79,7 @@ namespace ChurchAPI.Services
                 .Contains(objPaymentInputModel.PaymentGatewayName, StringComparer.OrdinalIgnoreCase))
             {
                 objPaymentInputModel.PaymentGatewayName = "Atomic";
-                objPayverify = await PaymentApiCallAsync(paymentResultModels);
+                objPayverify = await PaymentApiCallAsync(paymentResultModels, prodList);
 
                 if (!string.IsNullOrEmpty(objPayverify.atomTokenId))
                 {
@@ -118,7 +122,6 @@ namespace ChurchAPI.Services
 
             return paymentResultModels;
         }
-
         public async Task<Dictionary<string, string>> GetKeySecretGateWayAsync(long churchId,int? classDetails,string feeHeadings)
         {
             var keySecretDict = new Dictionary<string, string>();
@@ -160,7 +163,6 @@ namespace ChurchAPI.Services
 
             return keySecretDict;
         }
-
         public async Task<List<BillingYears>> GetBillingYearsAsync()
         {
             var result = new List<BillingYears>();
@@ -268,7 +270,6 @@ namespace ChurchAPI.Services
             }
             return list;
         }
-
         public async Task<List<MerchantNameModel>> GetMerchantNamesAsync(long churchId)
         {
             var list = new List<MerchantNameModel>();
@@ -294,7 +295,6 @@ namespace ChurchAPI.Services
             }
             return list;
         }
-
         public async Task<SchoolSetupModel?> GetActiveSchoolSetupAsync(long churchId)
         {
             using (var conn = new SqlConnection(_connectionString))
@@ -321,13 +321,13 @@ namespace ChurchAPI.Services
             }
             return null;
         }
-        public async Task<Payverify.Payverify> PaymentApiCallAsync(PaymentResultModels paymentResultModels)
+        public async Task<Payverify.Payverify> PaymentApiCallAsync(PaymentResultModels paymentResultModels,List<prodDetails>prodDetails)
         {
             try
             {
                 // Map request data
                 Payrequest.Payrequest objre = new Payrequest.Payrequest(_connectionString);
-                var mapdata = objre.RequestMap(paymentResultModels, paymentResultModels.ChurchId);
+                var mapdata = objre.RequestMap(paymentResultModels, paymentResultModels.ChurchId,prodDetails);
                 var json = JsonConvert.SerializeObject(mapdata);
                 string encryptVal = _encrypDecrpt.Encrypt(json);
                 var authUrl = _configuration["PayUSettings:atomtechAuthurl"];
@@ -464,6 +464,702 @@ namespace ChurchAPI.Services
                 return 0m;
             }
         }
+        public async Task<IApiResponse> GetmarchentDetails(long churchId)
+        {
+            var res = new ApiResponse();
+            try
+            {
+                var repo = new MerchantRepository(_connectionString);
+                var merchant = repo.GetMerchant(churchId);
+                PayUSettings ps = new PayUSettings();
+                ps = _payUSettings;
+                ps.Password = merchant?.Password??"";
+                res.Data = ps;//_payUSettings;
+                res.ResponseCode = "200";
+            }
+            catch (Exception ex)
+            {
+                res.Data = ex.Message;
+                res.ResponseCode = "500";
+                throw;
+            }
+
+            return res;
+        }
+        public async Task<IApiResponse> SaveOrUpdateSubscriptionBillAndPaymentAsync(BillDetailsViweModel detailsBilling,IEnumerable<prodDetails> prodList)
+        {
+            var res = new ApiResponse();
+
+            // 1. Validate input
+            if (detailsBilling == null)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Billing details cannot be null.";
+                return res;
+            }
+            if (string.IsNullOrWhiteSpace(detailsBilling.ChurchName))
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Church Details are required.";
+                return res;
+            }
+
+            try
+            {
+                // 2. Save or update subscription bill
+                await using (var connection = new SqlConnection(_connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    await using (var command = new SqlCommand("InsertSubscriptionBill", connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+
+                        // Add parameters (as you already had)
+                        command.Parameters.Add(new SqlParameter("@BillDetailId", SqlDbType.Int) { Value = detailsBilling.BillDetailId });
+                        command.Parameters.Add(new SqlParameter("@BillId", SqlDbType.Int) { Value = detailsBilling.BillId });
+                        command.Parameters.Add(new SqlParameter("@memberId", SqlDbType.Int) { Value = detailsBilling.FamilyId });
+                        command.Parameters.Add(new SqlParameter("@Heading", SqlDbType.NVarChar) { Value = (object)detailsBilling.BillHeading ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@SubHeading", SqlDbType.NVarChar) { Value = (object)string.Join(",", detailsBilling.SelectedBillHeadings) ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@Year", SqlDbType.NVarChar) { Value = (object)detailsBilling.Year ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@BillAmount", SqlDbType.Decimal) { Value = detailsBilling.ToPayAmount });
+                        command.Parameters.Add(new SqlParameter("@Total", SqlDbType.Decimal) { Value = detailsBilling.TotalAmount });
+                        command.Parameters.Add(new SqlParameter("@Discount", SqlDbType.Decimal) { Value = detailsBilling.Discount });
+                        command.Parameters.Add(new SqlParameter("@PaidAmount", SqlDbType.Decimal) { Value = detailsBilling.PaidAmount });
+                        command.Parameters.Add(new SqlParameter("@DueAmount", SqlDbType.Decimal) { Value = detailsBilling.DueAmount });
+                        command.Parameters.Add(new SqlParameter("@PaymentMode", SqlDbType.NVarChar) { Value = (object)detailsBilling.PaymentMode ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@PaidDate", SqlDbType.Date) { Value = detailsBilling.PaidDate });
+                        command.Parameters.Add(new SqlParameter("@BillGeneratedBy", SqlDbType.NVarChar) { Value = (object)detailsBilling.BillGeneratedBy ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@ChurchId", SqlDbType.Int) { Value = (object)detailsBilling.churchId ?? DBNull.Value });
+                        command.Parameters.Add(new SqlParameter("@CreatedDate", SqlDbType.Date)
+                        {
+                            Value = (detailsBilling.CreatedDate == default(DateTime))
+                                        ? DateTime.Now
+                                        : detailsBilling.CreatedDate
+                        });
+                        command.Parameters.Add(new SqlParameter("@createdBy", SqlDbType.NVarChar) { Value = (object)detailsBilling.CreatedBy ?? DBNull.Value });
+
+                        int rowsAffected = await command.ExecuteNonQueryAsync();
+                    }
+                }
+
+                // 3. Now call InsertPaymentTransactionAsync
+                var (paymentSuccess, paymentMsg) = await InsertPaymentTransactionAsync(detailsBilling, prodList);
+
+                if (paymentSuccess)
+                {
+                    res.ResponseCode = "200";
+                    res.Msg = "Bill and payment saved successfully.";
+                }
+                else
+                {
+                    res.ResponseCode = "500";
+                    // You might still want to say bill succeeded but payment failed
+                    res.Msg = "Bill saved, but payment insertion failed: " + paymentMsg;
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex);
+                res.ResponseCode = "500";
+                res.Msg = "An error occurred: " + ex.Message;
+            }
+
+            return res;
+        }
+        public async Task<(bool success, string message)> InsertPaymentTransactionAsync(BillDetailsViweModel objPaymentInputModel, IEnumerable<prodDetails> prodList)
+        {
+            try
+            {
+                List<int> headings = objPaymentInputModel.SelectedBillHeadings;
+
+                // Convert to comma-separated string
+                string headingsCsv = headings != null && headings.Any()
+                    ? string.Join(",", headings)
+                    : string.Empty;
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("InsertPaymentTransaction", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+
+                    // Setting parameters
+                    cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.CreatedDate.ToString("dd/MM/yyyy"));
+                    cmd.Parameters.AddWithValue("@Amount", objPaymentInputModel.TotalAmount);
+                    cmd.Parameters.AddWithValue("@TransactionId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@Pmntmode", "Online");
+                    cmd.Parameters.AddWithValue("@UserId", objPaymentInputModel.CreatedBy);
+                    cmd.Parameters.AddWithValue("@TrackId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@PaymentId", objPaymentInputModel.AtomTokenId ?? "");
+                    cmd.Parameters.AddWithValue("@FeeIds", headingsCsv);
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", objPaymentInputModel.FamilyRegistrationNo);
+                    cmd.Parameters.AddWithValue("@FamilyHeadName", objPaymentInputModel.FamilyHeadName);
+                    cmd.Parameters.AddWithValue("@FeeTitle", objPaymentInputModel.BillHeading);
+                    cmd.Parameters.AddWithValue("@FamilyId", objPaymentInputModel.FamilyId);
+                    cmd.Parameters.AddWithValue("@churchId", objPaymentInputModel.churchId);
+
+                    // Create JSON string of fee amounts
+                    string feeAmountsJson = JsonConvert.SerializeObject(
+                        prodList.Select(p => new { p.prodName, p.prodAmount })
+                    );
+                    cmd.Parameters.AddWithValue("@FeeAmounts", feeAmountsJson);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+
+                    if (rows < 0)
+                    {
+                        return (true, "Transaction inserted successfully.");
+                    }
+                    else
+                    {
+                        return (false, "No rows affected.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex); // agar aapka logger async hai
+                return (false, $"Exception: {ex.Message}");
+            }
+        }
+        public async Task<IApiResponse> SaveOrUpdateDonationBillAndPaymentAsync(DonationMaster donation, IEnumerable<prodDetails> prodList)
+        {
+            var res = new ApiResponse();
+
+            // 1. Validate input
+            if (donation == null)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Billing details cannot be null.";
+                return res;
+            }
+            if (string.IsNullOrWhiteSpace(donation.ChurchName))
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Church Details are required.";
+                return res;
+            }
+
+            try
+            {
+                // 2. Save or update subscription bill
+                await using (var connection = new SqlConnection(_connectionString))
+                {
+                    await connection.OpenAsync();
+
+                    await using (var command = new SqlCommand("usp_InsertOrUpdate_DonationMaster", connection))
+                    {
+                        command.CommandType = CommandType.StoredProcedure;
+                        command.Parameters.Add(new SqlParameter("@id", SqlDbType.BigInt) { Value = Convert.ToInt64(ReturnVal(donation.DonationId)) });
+                        command.Parameters.Add(new SqlParameter("@DonarName", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarName)) });
+                        command.Parameters.Add(new SqlParameter("@DonarContact", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarContact)) });
+                        command.Parameters.Add(new SqlParameter("@DonarEmail", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarEmail)) });
+                        command.Parameters.Add(new SqlParameter("@DonarAddress", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarAddress)) });
+                        command.Parameters.Add(new SqlParameter("@DonarCountry", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarCountry)) });
+                        command.Parameters.Add(new SqlParameter("@DonarPANCardNo", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarPANCardNo)) });
+                        command.Parameters.Add(new SqlParameter("@DonarGSTNo", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonarGSTNo)) });
+                        command.Parameters.Add(new SqlParameter("@DonationType", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.DonationType)) });
+                        command.Parameters.Add(new SqlParameter("@PaymentMode", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.PaymentMode)) });
+                        command.Parameters.Add(new SqlParameter("@Description", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.Description)) });
+                        command.Parameters.Add(new SqlParameter("@ChequeNo", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.ChequeNo)) });
+                        command.Parameters.Add(new SqlParameter("@BankName", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.BankName)) });
+                        command.Parameters.Add(new SqlParameter("@IFSCCode", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.IFSCCode)) });
+                        command.Parameters.Add(new SqlParameter("@TransactionNo", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.TransactionNo)) });
+                        command.Parameters.Add(new SqlParameter("@TransactionDate", SqlDbType.DateTime) { Value = Convert.ToDateTime(ReturnVal(donation.TransactionDate)) });
+                        command.Parameters.Add(new SqlParameter("@IsActive", SqlDbType.Bit) { Value = Convert.ToBoolean(ReturnVal(donation.IsActive)) });
+                        command.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.CreatedBy)) });
+                        command.Parameters.Add(new SqlParameter("@UpdatedBy", SqlDbType.NVarChar) { Value = Convert.ToString(ReturnVal(donation.UpdatedBy)) });
+                        command.Parameters.Add(new SqlParameter("@PaidAmount", SqlDbType.Decimal)
+                        {
+                            Value = Convert.ToDecimal(ReturnVal(donation.PaidAmount)),
+                            Precision = 18,
+                            Scale = 2
+                        });
+
+                        int rowsAffected = await command.ExecuteNonQueryAsync();
+
+                    }
+                }
+
+                // 3. Now call InsertPaymentTransactionAsync
+                var (paymentSuccess, paymentMsg) = await InsertDonationPaymentTransactionAsync(donation, prodList);
+
+                if (paymentSuccess)
+                {
+                    res.ResponseCode = "200";
+                    res.Msg = "Bill and payment saved successfully.";
+                }
+                else
+                {
+                    res.ResponseCode = "500";
+                    // You might still want to say bill succeeded but payment failed
+                    res.Msg = "Bill saved, but payment insertion failed: " + paymentMsg;
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex);
+                res.ResponseCode = "500";
+                res.Msg = "An error occurred: " + ex.Message;
+            }
+
+            return res;
+        }
+        private object ReturnVal(object value)
+        {
+            return value ?? DBNull.Value;
+        }
+        public async Task<(bool success, string message)> InsertDonationPaymentTransactionAsync(DonationMaster objPaymentInputModel, IEnumerable<prodDetails> prodList)
+        {
+            try
+            {
+               
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("InsertPaymentTransaction", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+
+                    // Setting parameters
+                    cmd.Parameters.AddWithValue("@TxnDate",objPaymentInputModel.TransactionDate.HasValue? objPaymentInputModel.TransactionDate.Value.ToString("dd/MM/yyyy"): DBNull.Value);
+                    // cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.TransactionDate.ToString("dd/MM/yyyy"));
+                    cmd.Parameters.AddWithValue("@Amount", objPaymentInputModel.PaidAmount);
+                    cmd.Parameters.AddWithValue("@TransactionId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@Pmntmode", "Online");
+                    cmd.Parameters.AddWithValue("@UserId", objPaymentInputModel.CreatedBy);
+                    cmd.Parameters.AddWithValue("@TrackId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@PaymentId", objPaymentInputModel.AtomTokenId ?? "");
+                    cmd.Parameters.AddWithValue("@FeeIds", "");
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", objPaymentInputModel.FamilyRegistrationNo);
+                    cmd.Parameters.AddWithValue("@FamilyHeadName", objPaymentInputModel.FamilyHeadName);
+                    cmd.Parameters.AddWithValue("@FeeTitle", "Donation");
+                    cmd.Parameters.AddWithValue("@FamilyId", objPaymentInputModel.FamilyId);
+                    cmd.Parameters.AddWithValue("@churchId", objPaymentInputModel.churchId);
+
+                    // Create JSON string of fee amounts
+                    string feeAmountsJson = JsonConvert.SerializeObject(
+                        prodList.Select(p => new { p.prodName, p.prodAmount })
+                    );
+                    cmd.Parameters.AddWithValue("@FeeAmounts", feeAmountsJson);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+
+                    if (rows < 0)
+                    {
+                        return (true, "Transaction inserted successfully.");
+                    }
+                    else
+                    {
+                        return (false, "No rows affected.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex); // agar aapka logger async hai
+                return (false, $"Exception: {ex.Message}");
+            }
+        }
+        public async Task<IApiResponse> SaveOrUpdateDomeboxDonationAsync(DomeboxDonationModel donation, IEnumerable<prodDetails> prodList)
+        {
+            var res = new ApiResponse();
+
+            if (donation == null)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Donation details cannot be null.";
+                return res;
+            }
+
+            if (donation.Amount <= 0)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Donation amount must be greater than zero.";
+                return res;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                await using var command = new SqlCommand("usp_InsertOrUpdate_DomeboxDonation", connection);
+                command.CommandType = CommandType.StoredProcedure;
+                command.Parameters.Add(new SqlParameter("@DonationId", SqlDbType.BigInt) { Value = donation.DonationId });
+                command.Parameters.Add(new SqlParameter("@DonorName", SqlDbType.NVarChar) { Value = (object)donation.DonorName ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonorContact", SqlDbType.NVarChar) { Value = (object)donation.DonorContact ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonorEmail", SqlDbType.NVarChar) { Value = (object)donation.DonorEmail ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@Amount", SqlDbType.Decimal) { Value = donation.Amount, Precision = 18, Scale = 2 });
+                command.Parameters.Add(new SqlParameter("@Currency", SqlDbType.NVarChar) { Value = (object)donation.Currency ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonationDate", SqlDbType.DateTime) { Value = (object)donation.DonationDate ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DomeboxId", SqlDbType.NVarChar) { Value = (object)donation.DomeboxId ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@Location", SqlDbType.NVarChar) { Value = (object)donation.Location ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@PaymentMode", SqlDbType.NVarChar) { Value = (object)donation.PaymentMode ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@ChequeNo", SqlDbType.NVarChar) { Value = (object)donation.ChequeNo ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@BankName", SqlDbType.NVarChar) { Value = (object)donation.BankName ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@IFSCCode", SqlDbType.NVarChar) { Value = (object)donation.IFSCCode ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@Remarks", SqlDbType.NVarChar) { Value = (object)donation.Remarks ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@IsAnonymous", SqlDbType.Bit) { Value = donation.IsAnonymous });
+                command.Parameters.Add(new SqlParameter("@IsActive", SqlDbType.Bit) { Value = donation.IsActive });
+                command.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.NVarChar) { Value = (object)donation.CreatedBy ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@UpdatedBy", SqlDbType.NVarChar) { Value = (object)donation.UpdatedBy ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@ChurchId", SqlDbType.Int) { Value = (object)donation.churchId ?? DBNull.Value });
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+                res.ResponseCode = "200";
+                res.Msg = "Donation saved successfully.";
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex);
+                res.ResponseCode = "500";
+                res.Msg = "An error occurred: " + ex.Message;
+            }
+            var (paymentSuccess, paymentMsg) = await InsertDomeboxPaymentTransactionAsync(donation, prodList);
+
+            return res;
+        }
+        public async Task<(bool success, string message)> InsertDomeboxPaymentTransactionAsync(DomeboxDonationModel objPaymentInputModel, IEnumerable<prodDetails> prodList)
+        {
+            try
+            {
+
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("InsertPaymentTransaction", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+
+                    // Setting parameters
+                    cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.DonationDate.HasValue ? objPaymentInputModel.DonationDate.Value.ToString("dd/MM/yyyy") : DBNull.Value);
+                    // cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.TransactionDate.ToString("dd/MM/yyyy"));
+                    cmd.Parameters.AddWithValue("@Amount", objPaymentInputModel.Amount);
+                    cmd.Parameters.AddWithValue("@TransactionId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@Pmntmode", "Online");
+                    cmd.Parameters.AddWithValue("@UserId", objPaymentInputModel.CreatedBy);
+                    cmd.Parameters.AddWithValue("@TrackId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@PaymentId", objPaymentInputModel.AtomTokenId ?? "");
+                    cmd.Parameters.AddWithValue("@FeeIds", "");
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", objPaymentInputModel.FamilyRegistrationNo);
+                    cmd.Parameters.AddWithValue("@FamilyHeadName", objPaymentInputModel.FamilyHeadName);
+                    cmd.Parameters.AddWithValue("@FeeTitle", "DomeBox");
+                    cmd.Parameters.AddWithValue("@FamilyId", objPaymentInputModel.FamilyId);
+                    cmd.Parameters.AddWithValue("@churchId", objPaymentInputModel.churchId);
+
+                    // Create JSON string of fee amounts
+                    string feeAmountsJson = JsonConvert.SerializeObject(
+                        prodList.Select(p => new { p.prodName, p.prodAmount })
+                    );
+                    cmd.Parameters.AddWithValue("@FeeAmounts", feeAmountsJson);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+
+                    if (rows < 0)
+                    {
+                        return (true, "Transaction inserted successfully.");
+                    }
+                    else
+                    {
+                        return (false, "No rows affected.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex); // agar aapka logger async hai
+                return (false, $"Exception: {ex.Message}");
+            }
+        }
+        public async Task<IApiResponse> SaveOrUpdateCampaignAsync(CampaigningModel model)
+        {
+            var res = new ApiResponse();
+
+            // 1. Validate input
+            if (model == null)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Campaign details cannot be null.";
+                return res;
+            }
+
+            if (string.IsNullOrWhiteSpace(model.CampaignName))
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Campaign name is required.";
+                return res;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                await using var command = new SqlCommand("usp_InsertOrUpdate_Campaigning", connection);
+                command.CommandType = CommandType.StoredProcedure;
+
+                // 2. Add all parameters
+                command.Parameters.Add(new SqlParameter("@CampaignId", SqlDbType.BigInt) { Value = model.CampaignId });
+                command.Parameters.Add(new SqlParameter("@ChurchId", SqlDbType.Int) { Value = model.ChurchId });
+                command.Parameters.Add(new SqlParameter("@CampaignName", SqlDbType.NVarChar) { Value = model.CampaignName });
+                command.Parameters.Add(new SqlParameter("@Description", SqlDbType.NVarChar) { Value = (object)model.Description ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@StartDate", SqlDbType.Date) { Value = model.StartDate });
+                command.Parameters.Add(new SqlParameter("@EndDate", SqlDbType.Date) { Value = (object)model.EndDate ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@TargetAmount", SqlDbType.Decimal) { Value = model.TargetAmount, Precision = 18, Scale = 2 });
+                command.Parameters.Add(new SqlParameter("@RaisedAmount", SqlDbType.Decimal) { Value = model.RaisedAmount, Precision = 18, Scale = 2 });
+                command.Parameters.Add(new SqlParameter("@IsActive", SqlDbType.Bit) { Value = model.IsActive });
+                command.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.NVarChar) { Value = model.CreatedBy });
+                command.Parameters.Add(new SqlParameter("@UpdatedBy", SqlDbType.NVarChar) { Value = (object)model.UpdatedBy ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@AttachmentName", SqlDbType.NVarChar) {Value =(object?)model.AttachmentName ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@AttachmentData", SqlDbType.VarBinary) { Value = (object?)model.AttachmentData ?? DBNull.Value });
+
+                await command.ExecuteNonQueryAsync();
+
+                res.ResponseCode = "200";
+                res.Msg = "Campaign saved successfully.";
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex);
+                res.ResponseCode = "500";
+                res.Msg = "An error occurred: " + ex.Message;
+            }
+
+            return res;
+        }
+        public async Task<IApiResponse> GetCampaign(int ChurchId)
+        {
+            var res = new ApiResponse();
+            try
+            {
+                var list = new List<CampaigningModel>();
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("GetActiveCampaigning", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+                    cmd.Parameters.AddWithValue("@ChurchId", ChurchId);
+
+                    await conn.OpenAsync();
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            list.Add(new CampaigningModel
+                            {
+                                CampaignId = Convert.ToInt64(reader["CampaignId"]),
+                                ChurchId = Convert.ToInt32(reader["ChurchId"]),
+                                CampaignName = reader["CampaignName"].ToString() ?? string.Empty,
+                                Description = reader["Description"].ToString() ?? string.Empty,
+                                StartDate = Convert.ToDateTime(reader["StartDate"]),//reader["StartDate"].ToString() ?? string.Empty,
+                                EndDate = Convert.ToDateTime(reader["EndDate"]),//reader["EndDate"].ToString() ?? string.Empty,
+                                TargetAmount = Convert.ToDecimal(reader["TargetAmount"]),//reader["TargetAmount"].ToString() ?? string.Empty,
+                                RaisedAmount = Convert.ToDecimal(reader["RaisedAmount"]),//reader["RaisedAmount"].ToString() ?? string.Empty,
+                                CreatedBy = reader["CreatedBy"].ToString() ?? string.Empty,
+                                CreatedDate = Convert.ToDateTime(reader["CreatedDate"]), //reader["CreatedDate"].ToString() ?? string.Empty,
+                                UpdatedBy = reader["UpdatedBy"].ToString() ?? string.Empty,
+                                UpdatedDate = reader["UpdatedDate"] != DBNull.Value ? Convert.ToDateTime(reader["UpdatedDate"]) : (DateTime?)null, //reader["UpdatedDate"].ToString() ?? string.Empty,
+                                AttachmentName = reader["AttachmentName"].ToString() ?? string.Empty,
+                                AttachmentData = reader["AttachmentData"] != DBNull.Value ? (byte[])reader["AttachmentData"] : null
+                            });
+                        }
+                    }
+                    res.Data= list;
+                    res.ResponseCode = "200";
+                }
+            }
+            catch (Exception ex) 
+            {
+                res.Msg = ex.Message;
+                res.ResponseCode = "500";
+            }
+            return res;
+        }
+        public async Task<IApiResponse> SaveOrUpdateCampaignDonationAsync(CampaignDonationModel donation, IEnumerable<prodDetails> prodList)
+        {
+            var res = new ApiResponse();
+
+            if (donation == null)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Donation details cannot be null.";
+                return res;
+            }
+
+            if (donation.Amount <= 0)
+            {
+                res.ResponseCode = "400";
+                res.Msg = "Donation amount must be greater than zero.";
+                return res;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                await using var command = new SqlCommand("usp_InsertOrUpdate_CampaignDonation", connection);
+                command.CommandType = CommandType.StoredProcedure;
+
+                command.Parameters.Add(new SqlParameter("@DonationId", SqlDbType.BigInt) { Value = donation.DonationId });
+                command.Parameters.Add(new SqlParameter("@CampaignId", SqlDbType.BigInt) { Value = donation.CampaignId });
+                command.Parameters.Add(new SqlParameter("@ChurchId", SqlDbType.Int) { Value = donation.ChurchId });
+                command.Parameters.Add(new SqlParameter("@DonorName", SqlDbType.NVarChar) { Value = (object)donation.DonorName ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonorContact", SqlDbType.NVarChar) { Value = (object)donation.DonorContact ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonorEmail", SqlDbType.NVarChar) { Value = (object)donation.DonorEmail ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@Amount", SqlDbType.Decimal) { Value = donation.Amount, Precision = 18, Scale = 2 });
+                command.Parameters.Add(new SqlParameter("@Currency", SqlDbType.NVarChar) { Value = (object)donation.Currency ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@DonationDate", SqlDbType.DateTime) { Value = (object)donation.DonationDate ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@PaymentMode", SqlDbType.NVarChar) { Value = (object)donation.PaymentMode ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@ChequeNo", SqlDbType.NVarChar) { Value = (object)donation.ChequeNo ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@BankName", SqlDbType.NVarChar) { Value = (object)donation.BankName ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@IFSCCode", SqlDbType.NVarChar) { Value = (object)donation.IFSCCode ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@TransactionNo", SqlDbType.NVarChar) { Value = (object)donation.TransactionNo ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@Remarks", SqlDbType.NVarChar) { Value = (object)donation.Remarks ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@IsAnonymous", SqlDbType.Bit) { Value = donation.IsAnonymous });
+                command.Parameters.Add(new SqlParameter("@IsActive", SqlDbType.Bit) { Value = donation.IsActive });
+                command.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.NVarChar) { Value = (object)donation.CreatedBy ?? DBNull.Value });
+                command.Parameters.Add(new SqlParameter("@UpdatedBy", SqlDbType.NVarChar) { Value = (object)donation.UpdatedBy ?? DBNull.Value });
+
+                var rowsAffected = await command.ExecuteNonQueryAsync();
+
+                res.ResponseCode = "200";
+                res.Msg = "Campaign donation saved successfully.";
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex);
+                res.ResponseCode = "500";
+                res.Msg = "An error occurred: " + ex.Message;
+            }
+
+            // Optional: handle any related payment insert logic if required
+            var (paymentSuccess, paymentMsg) = await InsertCampaignPaymentTransactionAsync(donation, prodList);
+
+            return res;
+        }
+        public async Task<(bool success, string message)> InsertCampaignPaymentTransactionAsync(CampaignDonationModel objPaymentInputModel, IEnumerable<prodDetails> prodList)
+        {
+            try
+            {
+
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("InsertPaymentTransaction", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+
+                    // Setting parameters
+                    cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.DonationDate.HasValue ? objPaymentInputModel.DonationDate.Value.ToString("dd/MM/yyyy") : DBNull.Value);
+                    // cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.TransactionDate.ToString("dd/MM/yyyy"));
+                    cmd.Parameters.AddWithValue("@Amount", objPaymentInputModel.Amount);
+                    cmd.Parameters.AddWithValue("@TransactionId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@Pmntmode", "Online");
+                    cmd.Parameters.AddWithValue("@UserId", objPaymentInputModel.CreatedBy);
+                    cmd.Parameters.AddWithValue("@TrackId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@PaymentId", objPaymentInputModel.AtomTokenId ?? "");
+                    cmd.Parameters.AddWithValue("@FeeIds", "");
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", objPaymentInputModel.FamilyRegistrationNo);
+                    cmd.Parameters.AddWithValue("@FamilyHeadName", objPaymentInputModel.FamilyHeadName);
+                    cmd.Parameters.AddWithValue("@FeeTitle", "Campaign");
+                    cmd.Parameters.AddWithValue("@FamilyId", objPaymentInputModel.FamilyId);
+                    cmd.Parameters.AddWithValue("@churchId", objPaymentInputModel.ChurchId);
+
+                    // Create JSON string of fee amounts
+                    string feeAmountsJson = JsonConvert.SerializeObject(
+                        prodList.Select(p => new { p.prodName, p.prodAmount })
+                    );
+                    cmd.Parameters.AddWithValue("@FeeAmounts", feeAmountsJson);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+
+                    if (rows < 0)
+                    {
+                        return (true, "Transaction inserted successfully.");
+                    }
+                    else
+                    {
+                        return (false, "No rows affected.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex); // agar aapka logger async hai
+                return (false, $"Exception: {ex.Message}");
+            }
+        }
+        public async Task<IApiResponse> InsertFailPaymentTransactionAsync(PaymentTransaction objPaymentInputModel)
+        {
+            var res = new ApiResponse();
+            try
+            {
+
+                using (var conn = new SqlConnection(_connectionString))
+                using (var cmd = new SqlCommand("InsertPaymentTransaction", conn))
+                {
+                    cmd.CommandType = CommandType.StoredProcedure;
+
+                    // Setting parameters
+                    cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.TxnDate);
+                    // cmd.Parameters.AddWithValue("@TxnDate", objPaymentInputModel.TransactionDate.ToString("dd/MM/yyyy"));
+                    cmd.Parameters.AddWithValue("@Amount", objPaymentInputModel.Amount);
+                    cmd.Parameters.AddWithValue("@TransactionId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@Pmntmode", "Online");
+                    cmd.Parameters.AddWithValue("@UserId", objPaymentInputModel.UserId);
+                    cmd.Parameters.AddWithValue("@TrackId", objPaymentInputModel.TrackId ?? "");
+                    cmd.Parameters.AddWithValue("@PaymentId", objPaymentInputModel.AtomtokenId ?? "");
+                    cmd.Parameters.AddWithValue("@FeeIds", "");
+                    cmd.Parameters.AddWithValue("@FamilyRegNo", objPaymentInputModel.FamilyRegNo);
+                    cmd.Parameters.AddWithValue("@FamilyHeadName", objPaymentInputModel.FamilyHeadName);
+                    cmd.Parameters.AddWithValue("@FeeTitle", objPaymentInputModel.FeeTitle);
+                    cmd.Parameters.AddWithValue("@FamilyId", objPaymentInputModel.FamilyId);
+                    cmd.Parameters.AddWithValue("@churchId", objPaymentInputModel.ChurchId);
+
+                    // Create JSON string of fee amounts
+                    string feeAmountsJson = JsonConvert.SerializeObject(
+                        objPaymentInputModel.prodDetails.Select(p => new { p.prodName, p.prodAmount })
+                    );
+                    cmd.Parameters.AddWithValue("@FeeAmounts", feeAmountsJson);
+
+                    await conn.OpenAsync();
+                    int rows = await cmd.ExecuteNonQueryAsync();
+
+                    if (rows < 0)
+                    {
+                        res.Msg = "Transaction inserted successfully.";
+                        res.ResponseCode = "200";
+                       // return (true, "Transaction inserted successfully.");
+                    }
+                    else
+                    {
+                        res.Msg = "No rows affected.";
+                        res.ResponseCode = "200";
+                        //  return (false, "No rows affected.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                await ErrorLogException.LogErrorAsync(ex); // agar aapka logger async hai
+                res.Msg=ex.Message;
+                res.ResponseCode = "500";
+                //return (false, $"Exception: {ex.Message}");
+            }
+            return res;
+        }
+
+    }
+
+    public class PayUSettings
+    {
+        public string AtomtechAuthurl { get; set; }
+        public string AtomtechmerchId { get; set; }
+        public string AtomtechEncrptkey { get; set; }
+        public string AtomtechDecrptkey { get; set; }
+        public string AtomtechResulturl { get; set; }
+        public string AtomtechReturnUrl { get; set; }
+        public string AtomtechRequestHashKey { get; set; }
+        public string AtomtechResponseHashKey { get; set; }
+        public string Password { get; set; }
+       // public string  { get; set; }
 
     }
 }

@@ -36,10 +36,13 @@ namespace ChurchAPI.Models
         public string UserName { get; set; } = null!;
         public string Email { get; set; } = null!;
         public string UserGuId { get; set; } = null!;
-        //public int DepartmentId { get; set; }
+        public long churchId { get; set; }
         public string RoleName { get; set; } = null!;
         public int UserRoleId { get; set; } = 0;
-        //public string ApplicationNo { get; set; } = null!;
-        //public int StaffId { get; set; } = 0;
+        public long  DioceseId { get; set; } = 0;
+        public string FamilyRegNo { get; set; } = null!;
+        public long FamilyId { get; set; } = 0;
+        public string  FireBaseToken { get; set; } = null!;
+        public string FamilyHeadName { get; set; } = null!;
     }
 }

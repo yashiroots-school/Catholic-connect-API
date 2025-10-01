@@ -6,8 +6,11 @@ namespace ChurchAPI.Interface
     public interface IAccountServices
     {
         Task<IApiResponse> GetDioceseDrop();
+        Task<IApiResponse> GetMasterDropdown();
         Task<IApiResponse> ValidateUserFromSPAsync(IEmployeeLoginInterface EmpLogingData);
         Task<IApiResponse> InsertUser(UserLogin request);
+        Task<IApiResponse> ChurchDetails(int DioceseId);
+        Task<IApiResponse> GetRoles();
     }
     public class EmployeeLoginParams : IEmployeeLoginInterface
     {

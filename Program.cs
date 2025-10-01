@@ -132,10 +132,12 @@ public partial class Program
         });
 
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+        builder.Services.Configure<PayUSettings>(builder.Configuration.GetSection("PayUSettings"));
         //builder.Services.AddApplicationDbContext(connectionString: connectionString);
         builder.Services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         builder.Services.AddTransient<IAccountServices, AccountServices>();
         builder.Services.AddTransient<IFamilyServices, FamilyServices>();
+      
         //builder.Services.AddTransient<EncrypDecrpt>(sp =>
         //{
         //    var configuration = sp.GetRequiredService<IConfiguration>();
@@ -144,13 +146,13 @@ public partial class Program
 
 
         builder.Services.AddTransient<IPaymentInterface, PaymentServices>();
-        //builder.Services.AddTransient<IAuthService, AuthService>();
+        builder.Services.AddTransient<IReportsInterface, ReportServices>();
         //builder.Services.AddTransient<IUserCredentialsService, UserCredentialsService>();
         //builder.Services.AddTransient<IAttendanceService, AttendanceService>();
         //builder.Services.AddTransient<IStudentInterfaces, StudentService>();
         //builder.Services.AddTransient<IExamInterface, ExamService>();
         //builder.Services.AddTransient<IEmailSender, SmtpEmailSender>();
-        //builder.Services.AddScoped<IDashBoardService, DashboardServices>();
+        builder.Services.AddScoped<IDashBoardInterface, DashBoardServices>();
         //builder.Services.AddScoped<IPaymentServies, PaymentService>();
         //builder.Services.AddScoped<INotificationServices, NotificationServices>();
         //builder.Services.AddControllers(options => options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true);

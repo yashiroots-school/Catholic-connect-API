@@ -32,6 +32,54 @@ namespace ChurchAPI.Controllers
             }
             return res;
         }
+        [HttpGet("GetMastersDropDown")]
+        public async Task<IApiResponse> GetMastersDropDown()
+        {
+            res = new ApiResponse();
+            try
+            {
+                res = await _accountServices.GetMasterDropdown();
+            }
+            catch (Exception ex)
+            {
+
+                res.Msg = ex.Message;
+                res.ResponseCode = "500";
+            }
+            return res;
+        }
+        [HttpGet("GetRolesDropDown")]
+        public async Task<IApiResponse> GetRolesDropDown()
+        {
+            res = new ApiResponse();
+            try
+            {
+                res = await _accountServices.GetRoles();
+            }
+            catch (Exception ex)
+            {
+
+                res.Msg = ex.Message;
+                res.ResponseCode = "500";
+            }
+            return res;
+        }
+        [HttpGet("GetChurchDropDown")]
+        public async Task<IApiResponse> GetChurchDropDown(int DioceseId)
+        {
+            res = new ApiResponse();
+            try
+            {
+                res = await _accountServices.ChurchDetails(DioceseId);
+            }
+            catch (Exception ex)
+            {
+
+                res.Msg = ex.Message;
+                res.ResponseCode = "500";
+            }
+            return res;
+        }
         [HttpPost("ValidateUser")]
         public async Task<IApiResponse> ValidateUserFromSP([FromBody] EmployeeLoginParams EmpLoginData)
         {

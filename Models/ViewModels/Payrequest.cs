@@ -80,7 +80,7 @@ public class Payrequest
     public Extras? extras { get; set; }
 
 
-    public RootObject RequestMap(PaymentResultModels paymentResultModels, long churchId)
+    public RootObject RequestMap(PaymentResultModels paymentResultModels, long churchId, List<prodDetails> prodDetails)
     {
         // Get merchant details via repository using SP
 
@@ -97,39 +97,26 @@ public class Payrequest
         PayDetails pd = new PayDetails();
         CustDetails cd = new CustDetails();
         Extras ex = new Extras();
-
-        // Head details
         hd.version = "OTSv1.1";
         hd.api = "AUTH";
         hd.platform = "FLASH";
-
-        // Merchant details
         md.merchId = merchant.MerchantMID;
         md.userId = merchant.UserId.ToString();
         md.password = merchant.Password;
         md.merchTxnDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         md.merchTxnId = DateTime.Now.ToString("yyyyddMMhhmmss");
 
-        // Payment details
         pd.amount = paymentResultModels.Amount;
         pd.txnCurrency = "INR";
         pd.custAccNo = "213232323";
-
-        //if (paymentResultModels.AccountType == "Primary")
-        //    pd.product = "Multi";
         if (merchant.MerchantName == "Primary")
            pd.product = "Multi";
 
-
-        // Define prodDetails list with NSE and BSE
-        pd.prodDetails = new List<prodDetails>
-    {
-        new prodDetails { prodName = "NSE",prodAmount=11 }, //prodAmount = paymentResultModels.NSEAmount },
-        new prodDetails { prodName = "BSE",prodAmount=12 } //prodAmount = paymentResultModels.BSEAmount }
-    };
+        pd.prodDetails = prodDetails;
+       
         // Customer details
         cd.custEmail = paymentResultModels.Email;
-        cd.custMobile = paymentResultModels.MobileNO;
+        cd.custMobile = "9876543210";
 
         // Extras
         ex.udf1 = paymentResultModels.FamilyId.ToString();
@@ -137,8 +124,6 @@ public class Payrequest
         ex.udf3 = paymentResultModels.ConcessionAmt.ToString();
         ex.udf4 = paymentResultModels.Feeheadingamt;
         ex.udf5 = paymentResultModels.FamilyRegNo;
-        ex.udf6 = paymentResultModels.Title;
-        // Assign properties directly to this instance
         this.headDetails = hd;
         this.merchDetails = md;
         this.payDetails = pd;
